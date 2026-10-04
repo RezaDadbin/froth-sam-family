@@ -1,266 +1,146 @@
 # Froth SAM Family
 
-Unified fine-tuning and evaluation scripts for **SAM**, **HQ-SAM**, and **MedSAM** on a proprietary froth segmentation task.
+Fine-tuning, evaluation, prediction, and qualitative visualization scripts for SAM, HQ-SAM, and MedSAM on industrial froth imagery.
 
-Authors: **Sina Lotfi**, **Reza Dadbin**
+**Authors:** Sina Lotfi and Reza Dadbin.
 
----
+## Research Status and Data Availability
 
-## Table of Contents
+This repository forms part of broader froth-image analysis research. Experimental work completed; a data-paper manuscript is currently in preparation.
 
-1. [Project Overview](#project-overview)
-2. [Key Features](#key-features)
-3. [Repository Structure](#repository-structure)
-4. [Environment Setup](#environment-setup)
-5. [Configuration](#configuration)
-6. [Data Preparation](#data-preparation)
-7. [Running the Pipeline](#running-the-pipeline)
-   - [Training](#training)
-   - [Evaluation](#evaluation)
-   - [Soft Mask Prediction](#soft-mask-prediction)
-   - [AMG-Style Visualization](#amg-style-visualization)
-8. [Outputs](#outputs)
-9. [Design Notes & Limitations](#design-notes--limitations)
-10. [References](#references)
+The research dataset is private/proprietary and is not distributed. Pretrained and fine-tuned checkpoints are also not bundled. The code is provided for research and reproducibility with compatible, independently supplied data and weights; the public repository alone does not reproduce the private experiments.
 
----
+## Overview
 
-## Project Overview
+The scripts adapt published SAM-family models to binary froth segmentation. They fine-tune the mask decoder with full-image box prompts while freezing the other model parameters. The underlying SAM, HQ-SAM, and MedSAM architectures and pretrained weights are the work of their original authors.
 
-This repository delivers a **script-based pipeline** for fine-tuning Segment Anything–style models on a froth segmentation dataset. The pipeline supports three ViT-B backbones:
-
-- **SAM** (Segment Anything Model)
-- **HQ-SAM** (High-Quality SAM)
-- **MedSAM** (Medical SAM, adapted for this domain)
-
-All training is performed in a **decoder-only** fashion using a **full-image box prompt**. The encoders remain frozen to maintain training stability while adapting the mask decoder to froth-specific imagery.
-
-> ⚠️ **Dataset availability**
-> The froth dataset is **private** and **not distributed** with this repository. You must supply your own dataset following the [expected structure](#data-preparation).
-
-## Key Features
-
-- Unified CLI scripts for training, evaluation, prediction, and visualization across three SAM-family models.
-- Modular Python package (`sam_froth`) containing dataset loaders, model wrappers, loss functions, and metrics.
-- Lightweight `config.py` to centralize paths, hyperparameters, and checkpoint locations.
-- Decoder-only fine-tuning strategy for efficient adaptation without retraining large encoders.
-- Utilities for exporting soft masks and generating AMG-style qualitative overlays.
+The repository supplies froth-specific dataset loading, model integration, training/evaluation scripts, and mask visualization. Using MedSAM on this dataset is an industrial-imaging experiment, not evidence of completed medical-imaging research.
 
 ## Repository Structure
 
 ```text
-froth-sam-family/
-├─ config.py                 # Central configuration values
-├─ requirements.txt          # Python dependencies
-├─ README.md                 # Project documentation
-│
-├─ sam_froth/                # Package with shared components
-│   ├─ data/
-│   │   └─ froth_dataset.py  # TIFF + LabelMe JSON dataset loader
-│   ├─ models/
-│   │   ├─ sam_base.py       # Base SAM helpers
-│   │   ├─ hqsam.py          # HQ-SAM helpers
-│   │   └─ medsam.py         # MedSAM helpers
-│   └─ utils/
-│       ├─ losses.py         # BCEDiceLoss implementation
-│       └─ metrics.py        # IoU, Dice, and related metrics
-│
-├─ scripts/                  # Entry points for the pipeline
-│   ├─ train.py              # Fine-tune decoder for chosen model
-│   ├─ eval.py               # Compute quantitative metrics
-│   ├─ predict.py            # Export continuous mask predictions
-│   └─ amg_demo.py           # AMG-style qualitative visualization
-│
-├─ data/                     # (git-ignored) place your dataset here
-│   ├─ train/
-│   ├─ test/
-│   └─ eval/
-│
-├─ weights/                  # (git-ignored) pretrained & finetuned weights
-└─ outputs/                  # (git-ignored) experiment artifacts
+config.py                       paths, hyperparameters, model selection
+sam_froth/data/froth_dataset.py  TIFF/LabelMe loading and mask rasterization
+sam_froth/models/                wrappers for published SAM-family models
+sam_froth/utils/                 loss and metric helpers
+scripts/train.py                decoder fine-tuning
+scripts/eval.py                 segmentation metrics
+scripts/predict.py              mask visualization export
+scripts/amg_demo.py             interactive qualitative comparison
 ```
+
+Local `data/`, `weights/`, and `outputs/` directories are ignored by Git.
 
 ## Environment Setup
 
-### Python & PyTorch
+Use Python 3.10 or newer and a virtual environment. From the repository root:
 
-- Python **3.10** or newer is recommended.
-- Install a PyTorch build compatible with your CUDA/cuDNN stack (CPU-only builds are also supported).
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install torch torchvision
+python -m pip install numpy Pillow tifffile opencv-python matplotlib tqdm timm
+python -m pip install git+https://github.com/facebookresearch/segment-anything.git
+python -m pip install segment-anything-hq
+```
 
-### Python Dependencies
+On Windows, activate with `.venv\Scripts\activate`. Choose a compatible PyTorch/TorchVision build using the [official instructions](https://pytorch.org/get-started/locally/) if CUDA support is required.
 
-1. Create and activate a virtual environment (optional but recommended).
-2. Install the required packages:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-   The list includes (non-exhaustive): `torch`, `torchvision`, `numpy`, `tifffile`, `opencv-python`, `matplotlib`, `tqdm`, `segment-anything`, and `segment-anything-hq`.
-
-### Optional GPU Setup
-
-Ensure your environment exposes the correct CUDA devices if you intend to train or run inference on a GPU. Scripts respect standard PyTorch CUDA environment variables.
-
-## Configuration
-
-Edit **`config.py`** to customize:
-
-- Dataset root directories
-- Output directories for checkpoints, logs, and predictions
-- Training hyperparameters (batch size, epochs, learning rate)
-- Model-specific checkpoint paths (`sam_vit_b_01ec64.pth`, `sam_hq_vit_b.pth`, `medsam_vit_b.pth`)
-
-All CLI scripts import from `config.py`, so updates automatically propagate across the pipeline.
+The current `requirements.txt` is empty, so installing it alone does not install the dependencies. The commands above follow the code's imports and the upstream [SAM](https://github.com/facebookresearch/segment-anything) and [HQ-SAM](https://github.com/SysCV/sam-hq) installation paths. Both model packages are imported by the shared wrappers, including when selecting a single backend. Check upstream package compatibility and record the versions used for each experiment.
 
 ## Data Preparation
 
-The code expects paired TIFF images and LabelMe-style JSON annotations. Organize your dataset as follows:
+Supply paired TIFF images and LabelMe JSON annotations with matching filename stems:
 
 ```text
 data/
-├─ train/
-│   ├─ image_001.tif
-│   ├─ image_001.json
-│   ├─ image_002.tif
-│   └─ image_002.json
-├─ test/
-│   └─ ...
-└─ eval/                      # optional hold-out split
-    └─ ...
+├── train/
+│   ├── image_001.tif
+│   └── image_001.json
+├── test/                       validation during training
+│   └── ...
+└── eval/                       optional separate evaluation split
+    └── ...
 ```
 
-Each JSON file should contain polygons delineating froth regions. During training the scripts automatically convert these annotations to binary masks aligned with the TIFF imagery.
+Use polygons labeled `froth`, or change `Config.label_key`. The dataset loader rasterizes the polygons into binary masks. Training uses `train/` and `test/`; evaluation and prediction choose a nonempty `eval/`, then `test/`, then `train/`. Check the printed split before interpreting metrics. Evaluation on training data is not a held-out result.
 
-## Running the Pipeline
+## Configuration and Weights
 
-All commands can be executed from the repository root. Replace `MODEL` with one of `sam`, `hqsam`, or `medsam` as needed.
+Edit `config.py` for dataset paths, output paths, device, seed, batch size, learning rate, and epochs. The default batch size is one.
 
-### Before You Run Any Script
+Download the appropriate ViT-B checkpoints from the original projects and place them at the configured paths:
 
-1. **Activate your environment** – ensure the virtual environment (or Conda env) that contains the repository dependencies is active.
-2. **Verify paths in `config.py`** – double-check dataset, checkpoint, and output directories so the scripts resolve the correct locations.
-3. **Stage your data** – confirm the `data/` directory follows the expected `train/`, `test/`, and optional `eval/` structure with paired TIFF and JSON files.
-4. **Download model weights** – place the SAM-family checkpoints referenced in `config.py` under the configured `weights/` directory.
-5. **Warm up CUDA (optional)** – if you are using a GPU, run a quick PyTorch tensor allocation to pre-initialize CUDA context and avoid a cold-start delay on the first script execution.
+```text
+weights/sam_vit_b_01ec64.pth
+weights/sam_hq_vit_b.pth
+weights/medsam_vit_b.pth
+```
 
-Each CLI run produces log output in the terminal; detailed artifacts (checkpoints, metrics, predictions) are written under the `outputs/` directory tree.
+These are pretrained inputs. Training writes the fine-tuned checkpoints under `outputs/<model>_finetune_out/`.
 
-### Training
+## Training
 
-Fine-tune the decoder of a specific backbone:
+From the repository root:
 
 ```bash
-python -m scripts.train --model {sam|hqsam|medsam} --epochs 50
+python -m scripts.train --model sam --epochs 50
 ```
 
-**Arguments**
+Replace `sam` with `hqsam` or `medsam` to run another backend. Training prints epoch loss and validation IoU. It writes decoder-only and full-model checkpoints using the tag `<model>_vit_b_decoder_only`:
 
-- `--model` – choose `sam`, `hqsam`, or `medsam`.
-- `--epochs` – set the total number of fine-tuning epochs.
+```text
+outputs/sam_finetune_out/
+├── sam_vit_b_decoder_only_decoder_best.pth
+├── sam_vit_b_decoder_only_decoder_last.pth
+├── sam_vit_b_decoder_only_full_best.pth
+└── sam_vit_b_decoder_only_full_last.pth
+```
 
-**Typical workflow**
+The best checkpoint is selected by validation IoU. The script starts a new training run when invoked again; it does not restore optimizer/epoch state automatically. Archive an output directory before repeating an experiment to avoid overwriting checkpoints.
 
-1. Monitor the console to confirm the script locates the correct backbone weights and dataset split.
-2. Watch the training progress bar for loss, Dice, and IoU metrics; these values are also mirrored to `train_log.json` within the model-specific output directory.
-3. After training completes, inspect `outputs/<model>_finetune_out/` for the checkpoint with the lowest validation loss (saved as `best_model.pth`).
-
-**Tips**
-
-- Resume training by reusing the same output directory; the script loads the latest checkpoint automatically.
-- Adjust batch size or learning rate directly in `config.py` if you encounter GPU memory constraints.
-
-### Evaluation
-
-Compute mean IoU, Dice score, and related metrics on a dataset split:
+## Evaluation
 
 ```bash
-python -m scripts.eval --model {sam|hqsam|medsam} --thr 0.5
+python -m scripts.eval --model sam --thr 0.5
 ```
 
-**Arguments**
+Evaluation loads the corresponding `*_full_best.pth` checkpoint and prints mean IoU and Dice on the chosen dataset split. Capture terminal output if you need a metrics record; the script does not write `metrics.json`.
 
-- `--model` – choose `sam`, `hqsam`, or `medsam` for the decoder being evaluated.
-- `--thr` – probability threshold (default `0.5`) used to binarize soft masks before metrics.
-
-**What happens during evaluation**
-
-1. The script loads the latest checkpoint from `outputs/<model>_finetune_out/` unless another path is provided in `config.py`.
-2. Predictions are generated for the designated evaluation split and thresholded at the provided probability.
-3. Per-image metrics and aggregate statistics (Dice, IoU, precision, recall) are printed and saved to `metrics.json` for later review.
-
-**Verification steps**
-
-- Compare the printed metrics with previous runs to track improvement trends.
-- Optionally visualize the confusion mask overlays saved to `outputs/<model>_finetune_out/qualitative_eval/` (enable via configuration).
-
-### Soft Mask Prediction
-
-Generate per-pixel probability maps (0–1) and save them as PNG files:
+## Prediction
 
 ```bash
-python -m scripts.predict --model {sam|hqsam|medsam}
+python -m scripts.predict --model sam
 ```
 
-**Arguments**
+Prediction loads the best full-model checkpoint and writes sequentially named PNGs such as `mask_0000.png` under:
 
-- `--model` – choose `sam`, `hqsam`, or `medsam`.
+```text
+outputs/pred_masks/sam_vit_b_decoder_only/soft/
+```
 
-**Output layout**
+Each predicted mask is independently min/max normalized to an 8-bit visualization. These PNGs are not calibrated probability maps, and raw float tensors are not exported by the script. The current prediction workflow uses the paired annotation dataset loader.
 
-- Soft masks (float tensors) are exported alongside 8-bit PNG visualizations under `outputs/pred_masks/<model>_vit_b_decoder_only/soft/`.
-- File names mirror the input image stems, making it easy to line up predictions with source data.
-
-**Usage suggestions**
-
-- Convert the saved tensors into TIFF or NIfTI format if you require integration with medical-imaging pipelines.
-- Batch multiple prediction runs by pointing `config.py` to different dataset subsets (e.g., `test` vs. `unlabeled`).
-
-### AMG-Style Visualization
-
-Produce qualitative overlays using SAM-style automatic mask generation:
+## Qualitative Visualization
 
 ```bash
-python -m scripts.amg_demo --model {sam|hqsam|medsam} --split data/split_name --idx 0
+python -m scripts.amg_demo --model sam --split test --idx 0
 ```
 
-**Arguments**
+`--split` accepts `auto`, `train`, `test`, or `eval`; it does not accept an arbitrary folder path. The demo displays the original image, annotation mask, and generated overlay in Matplotlib. The HQ-SAM branch uses a custom point-grid procedure. The script has no automatic headless export path.
 
-- `--model` – choose `sam`, `hqsam`, or `medsam` to match the weights in use.
-- `--split` – path or alias to the dataset split AMG should draw from (e.g., `test`, `eval`, or a folder path).
-- `--idx` – integer index of the sample within the chosen split.
+## Reproducibility and Limitations
 
-**Interpretation guide**
+- Record dataset provenance, train/validation/evaluation splits, seed, configuration, checkpoints, package versions, device, and repository commit.
+- Seeds are set for Python, NumPy, and PyTorch; identical results across devices or versions are not guaranteed.
+- The public workflow assumes binary segmentation and uses frozen encoders. It does not establish broad foundation-model or medical-domain research experience.
+- Checkpoint compatibility, private data, and upstream dependencies must be supplied before running experiments. No quantitative performance claim is made in this README.
 
-- The script renders the original image, predicted masks, and contour overlays in a Matplotlib window (or saves them if headless mode is configured).
-- HQ-SAM leverages a grid-based AMG variant that tends to produce denser proposals; expect more candidate masks than with vanilla SAM.
-- MedSAM AMG is experimental—treat the results as a qualitative sanity check rather than a definitive segmentation.
+## Attribution
 
-**Troubleshooting**
+- [SAM — Meta AI](https://github.com/facebookresearch/segment-anything).
+- [HQ-SAM — original project](https://github.com/SysCV/sam-hq).
+- [MedSAM — original project](https://github.com/bowang-lab/MedSAM).
 
-- If the window does not appear, ensure you are running with an available display backend (`matplotlib.use("Agg")` saves to disk instead).
-- Large TIFFs might require additional RAM; consider downsampling via `config.py` visualization options if you encounter memory pressure.
-
-## Outputs
-
-All artifacts are stored under `outputs/` (path configurable). Typical contents include:
-
-- `*_finetune_out/` – training logs, checkpoints, and configuration snapshots.
-- `pred_masks/` – soft mask PNGs grouped by model.
-
-Keep the directory structure consistent to simplify downstream analysis and reproducibility.
-
-## Design Notes & Limitations
-
-- **Dataset privacy** – No sample data is bundled. Users must prepare their own froth segmentation dataset.
-- **Decoder-only fine-tuning** – Encoders remain frozen; adapting them would require script modifications.
-- **Binary segmentation** – The current setup assumes a single foreground class. Extending to multi-class would require updates to the dataset processing, loss functions, and decoder heads.
-- **MedSAM AMG** – Visualization support exists but is less stable than SAM/HQ-SAM AMG.
-
-## References
-
-- [Segment Anything Model (SAM) — Meta AI](https://github.com/facebookresearch/segment-anything)
-- [HQ-SAM](https://github.com/ChaoningZhang/HQ-SAM)
-- MedSAM original paper and ViT-B checkpoint by its authors
-
-All froth-specific engineering, integration, and experimentation: **Sina Lotfi** and **Reza Dadbin**.
+Froth-specific workflow and experimentation are credited to Sina Lotfi and Reza Dadbin. Please cite the original model papers when using their methods, and acknowledge this repository when using its froth-specific code. The manuscript in preparation is not a published reference.
